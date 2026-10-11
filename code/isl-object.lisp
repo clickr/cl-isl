@@ -33,6 +33,25 @@ of type OBJECT-NAME."
 ;;; each handle has exactly one corresponding wrapper object.
 (defvar *isl-object-table* (trivial-garbage:make-weak-hash-table :weakness :value))
 
+;;; Finalizers may run in a thread of their own, and isl must not be called
+;;; from two threads at once.  So a finalizer only records which handle to
+;;; free, and the handles are freed by whichever thread next creates an ISL
+;;; object.
+(defvar *pending-frees* '())
+
+(defvar *pending-frees-lock* (bordeaux-threads:make-lock "isl pending frees"))
+
+(defun schedule-free (free handle)
+  (bordeaux-threads:with-lock-held (*pending-frees-lock*)
+    (push (cons free handle) *pending-frees*)))
+
+(defun free-pending-handles ()
+  (let ((pending
+          (bordeaux-threads:with-lock-held (*pending-frees-lock*)
+            (shiftf *pending-frees* '()))))
+    (loop for (free . handle) in pending do
+      (funcall free handle))))
+
 (defmacro define-isl-object
     (name &key (abstract nil)
             (list-type nil)
@@ -50,6 +69,12 @@ of type OBJECT-NAME."
     (setf (isl-object-%make name) %make)
     (setf (isl-object-%free name) %free)
     `(progn
+       ;; Also record the functions of this object when the compiled file
+       ;; is loaded, so that later files can be compiled on their own.
+       (eval-when (:compile-toplevel :load-toplevel :execute)
+         (setf (isl-object-%copy ',name) ',%copy)
+         (setf (isl-object-%make ',name) ',%make)
+         (setf (isl-object-%free ',name) ',%free))
        (defstruct (,name (:include ,superclass)
                          (:predicate ,predicate)
                          (:copier nil)
@@ -65,14 +90,19 @@ of type OBJECT-NAME."
        ,@(unless abstract
            `((defun ,%make (handle)
                (when (cffi:null-pointer-p handle) (isl-error))
-               (values
-                (alexandria:ensure-gethash
-                 (cffi:pointer-address handle)
-                 *isl-object-table*
-                 (trivial-garbage:finalize (,%%make handle)
-                                           (lambda ()
-                                             (remhash (cffi:pointer-address handle) *isl-object-table*)
-                                             (,%free handle))))))))
+               (free-pending-handles)
+               (let ((existing (gethash (cffi:pointer-address handle) *isl-object-table*)))
+                 (cond (existing
+                        ;; The handle is another reference to an object
+                        ;; that already has a wrapper, which owns one
+                        ;; reference only.
+                        (,%free handle)
+                        existing)
+                       (t
+                        (setf (gethash (cffi:pointer-address handle) *isl-object-table*)
+                              (trivial-garbage:finalize
+                               (,%%make handle)
+                               (lambda () (schedule-free ',%free handle))))))))))
        ,@(when %copy
            `((defmethod copy ((,name ,name))
                (,%make (,%copy (isl-object-handle ,name)))))))))

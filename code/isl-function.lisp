@@ -228,6 +228,11 @@
               (eq (isl-type (isl-fn-result fn)) isl-object-name)))))
 
 (defun optimize-isl-function-call (whole &key (recursive nil))
+  ;; The table of ISL functions is filled when DEFINE-ISL-FUNCTION is
+  ;; expanded, so it is empty when this system is loaded from compiled
+  ;; files.  Decline to optimize a call to a function that is not in it.
+  (unless (isl-fn (first whole))
+    (return-from optimize-isl-function-call whole))
   (destructuring-bind (name &rest forms) whole
     (with-accessors ((name isl-fn-name)
                      (primitive isl-fn-primitive)

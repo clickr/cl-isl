@@ -41,11 +41,15 @@
 (define-isl-object if-node
   :superclass ast-node)
 
+(define-isl-function if-node-get-cond %isl-ast-node-if-get-cond
+  (:give ast-expr)
+  (:keep if-node))
+
+;; The branches of an if node are nodes, not expressions.
 (macrolet ((def (name impl)
              `(define-isl-function ,name ,impl
-                (:give ast-expr)
+                (:give ast-node)
                 (:keep if-node))))
-  (def if-node-get-cond %isl-ast-node-if-get-cond)
   (def if-node-get-then %isl-ast-node-if-get-then)
   (def if-node-get-else %isl-ast-node-if-get-else))
 

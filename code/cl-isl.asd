@@ -4,7 +4,7 @@
   :version "1.0"
   :license "MIT"
   :defsystem-depends-on ("cffi-grovel")
-  :depends-on ("alexandria" "cffi" "trivial-garbage")
+  :depends-on ("alexandria" "bordeaux-threads" "cffi" "trivial-garbage")
   :in-order-to ((test-op (test-op "cl-isl-test-suite")))
   :serial t
   :components
